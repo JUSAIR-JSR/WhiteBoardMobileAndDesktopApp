@@ -1,3 +1,4 @@
+// server/server.js (already close to this)
 import express from "express";
 import http from "http";
 import { Server } from "socket.io";
@@ -9,22 +10,20 @@ app.use(express.json());
 
 const server = http.createServer(app);
 const io = new Server(server, {
-    cors: {
+  cors: {
     origin: "*",
-    methods: ["GET", "POST"]
-  }
+    methods: ["GET", "POST"],
+  },
+  path: "/socket.io/"
 });
 
 io.on("connection", (socket) => {
   console.log("Client connected:", socket.id);
 
-  // broadcast drawing to others
   socket.on("draw", (data) => {
-    // data: { type:'stroke', points:[{x,y}], color, width }
     socket.broadcast.emit("draw", data);
   });
 
-  // optional: clear
   socket.on("clear", () => {
     io.emit("clear");
   });
