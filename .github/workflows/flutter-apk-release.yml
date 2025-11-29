@@ -1,0 +1,34 @@
+name: Build & Release APK
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Setup Flutter (Flutter 3.27.1 → supports Dart 3.8.1)
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.27.1"
+
+      - name: Install dependencies
+        run: flutter pub get
+        working-directory: mobile
+
+      - name: Build APK
+        run: flutter build apk --release
+        working-directory: mobile
+
+      - name: Upload APK to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: mobile/build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
