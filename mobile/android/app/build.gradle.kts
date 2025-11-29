@@ -29,13 +29,14 @@ android {
         jvmTarget = JavaVersion.VERSION_11.toString()
     }
 
-    // ❌ REMOVE release signing
-    // ❌ No keystore needed
-
+    // ----------------------------------------------------
+    // 🔥 FIX: Use debug signing for GitHub build
+    // ----------------------------------------------------
     buildTypes {
         getByName("release") {
-            // Use debug signing so APK builds everywhere (GitHub Actions)
+            // Use the default debug keystore (safe for GitHub)
             signingConfig = signingConfigs.getByName("debug")
+
             isMinifyEnabled = false
             isShrinkResources = false
         }
