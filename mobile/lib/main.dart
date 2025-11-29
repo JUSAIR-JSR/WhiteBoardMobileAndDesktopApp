@@ -1,3 +1,4 @@
+// mobile/lib/main.dart
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:socket_io_client/socket_io_client.dart' as IO;
@@ -21,17 +22,11 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blue,
-          brightness: Brightness.light,
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.light),
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blue,
-          brightness: Brightness.dark,
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue, brightness: Brightness.dark),
       ),
       home: WhiteboardPage(),
     );
@@ -50,7 +45,7 @@ class _WhiteboardPageState extends State<WhiteboardPage> {
   Stroke? currentStroke;
 
   final ScrollController _scrollController = ScrollController();
-  final _strokesStreamController = StreamController<List<Stroke>>.broadcast();
+  final StreamController<List<Stroke>> _strokesStreamController = StreamController<List<Stroke>>.broadcast();
 
   ToolMode _currentTool = ToolMode.pen;
   bool _isLocked = false;
@@ -59,7 +54,10 @@ class _WhiteboardPageState extends State<WhiteboardPage> {
   double _strokeWidth = 3.0;
 
   Offset _lastPan = Offset.zero;
-  late RenderBox _canvasBox;
+
+  // SINGLE GlobalKey for the canvas (must be unique)
+  final GlobalKey _canvasKey = GlobalKey();
+  RenderBox? _canvasBox; // will be set after frame
 
   // Color presets for quick access
   final List<Color> _colorPresets = [
@@ -81,7 +79,12 @@ class _WhiteboardPageState extends State<WhiteboardPage> {
     super.initState();
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _canvasBox = context.findRenderObject() as RenderBox;
+      // safely assign the canvas render box after first frame
+      try {
+        _canvasBox = _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+      } catch (_) {
+        _canvasBox = null;
+      }
     });
 
     _setupSocket();
@@ -134,18 +137,14 @@ class _WhiteboardPageState extends State<WhiteboardPage> {
 
   void _setupScrollListener() {
     _scrollController.addListener(() {
-      // Update UI if needed for scroll position indicators
+      // Currently unused, but keeps you ready for scroll indicators / sync UI
     });
   }
 
   void _showSnackBar(String message, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: color,
-        duration: Duration(seconds: 2),
-      ),
-    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).removeCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: color, duration: Duration(seconds: 2)));
   }
 
   String colorToHex(Color c) {
@@ -153,8 +152,17 @@ class _WhiteboardPageState extends State<WhiteboardPage> {
     return "#" + hex.substring(2);
   }
 
+  // SAFELY convert global position -> canvas absolute coordinates
   Offset getCanvasPosition(Offset globalPos) {
-    final local = _canvasBox.globalToLocal(globalPos);
+    // Ensure _canvasBox is available (try to reassign if null)
+    _canvasBox ??= _canvasKey.currentContext?.findRenderObject() as RenderBox?;
+    if (_canvasBox == null) {
+      // fallback: use globalPos as-is (best effort)
+      final fallbackLocal = globalPos;
+      final absX = fallbackLocal.dx + _scrollController.offset;
+      return Offset(absX, fallbackLocal.dy);
+    }
+    final local = _canvasBox!.globalToLocal(globalPos);
     final absX = local.dx + _scrollController.offset;
     return Offset(absX, local.dy);
   }
@@ -225,24 +233,29 @@ class _WhiteboardPageState extends State<WhiteboardPage> {
     );
   }
 
- Widget _buildToolButton(IconData icon, String tooltip, ToolMode mode, {Color? color}) {
-  final isActive = _currentTool == mode;
-  return Tooltip(
-    message: tooltip,
-    child: IconButton(
-      icon: Icon(icon, size: 28),
-      color: isActive ? (color ?? Colors.blue) : Colors.grey,
-      onPressed: () {
-        setState(() {
-          _currentTool = mode;
-          if (mode == ToolMode.lock) {
-            _isLocked = !_isLocked;
-          }
-        });
-      },
-    ),
-  );
-}
+  Widget _buildToolButton(IconData icon, String tooltip, ToolMode mode, {Color? color}) {
+    final isActive = _currentTool == mode;
+    return Tooltip(
+      message: tooltip,
+      child: IconButton(
+        icon: Icon(icon, size: 28),
+        color: isActive ? (color ?? Colors.blue) : Colors.grey,
+        onPressed: () {
+          setState(() {
+            _currentTool = mode;
+            if (mode == ToolMode.lock) {
+              _isLocked = !_isLocked;
+            } else if (mode == ToolMode.eraser) {
+              // keep mode set to eraser
+            } else {
+              // normal selection
+            }
+          });
+        },
+      ),
+    );
+  }
+
   Widget _buildColorPreset(Color color) {
     final isSelected = _selectedColor.value == color.value && _currentTool == ToolMode.pen;
     return GestureDetector(
@@ -304,331 +317,268 @@ class _WhiteboardPageState extends State<WhiteboardPage> {
   }
 
   @override
-Widget build(BuildContext context) {
-  final screenSize = MediaQuery.of(context).size;
-  final isPortrait = screenSize.height > screenSize.width;
+  Widget build(BuildContext context) {
+    final screenSize = MediaQuery.of(context).size;
+    final isPortrait = screenSize.height > screenSize.width;
 
-  return WillPopScope(
-    onWillPop: () async {
-      if (strokes.isNotEmpty) {
-        final shouldPop = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: Text('Unsaved Changes'),
-            content: Text('You have unsaved drawings. Are you sure you want to exit?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: Text('Exit'),
-              ),
-            ],
-          ),
-        );
-        return shouldPop ?? false;
+    // ensure canvasBox is available if possible (safety)
+    if (_canvasBox == null && _canvasKey.currentContext != null) {
+      try {
+        _canvasBox = _canvasKey.currentContext!.findRenderObject() as RenderBox?;
+      } catch (_) {
+        _canvasBox = null;
       }
-      return true;
-    },
-    child: Scaffold(
-      body: Stack(
-        children: [
-          // Background
-          Container(
-            color: Theme.of(context).colorScheme.background,
-          ),
+    }
 
-          Row(
-            children: [
-              // Enhanced Sidebar
-              Container(
-                width: isPortrait ? 80 : 100,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surface,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black26,
-                      blurRadius: 8,
-                      offset: Offset(2, 0),
-                    ),
-                  ],
-                ),
-                child: SafeArea(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Top Tools Section
-                      Column(
-                        children: [
-                          _buildToolButton(Icons.brush, 'Draw', ToolMode.pen),
-                          SizedBox(height: 16),
-                          _buildToolButton(Icons.pan_tool, 'Move', ToolMode.move),
-                          SizedBox(height: 16),
-                          _buildToolButton(Icons.auto_fix_off, 'Eraser', ToolMode.eraser),
-                          SizedBox(height: 16),
-                          _buildToolButton(
-                            _isLocked ? Icons.lock : Icons.lock_open,
-                            _isLocked ? 'Unlock' : 'Lock',
-                            ToolMode.lock,
-                            color: _isLocked ? Colors.red : Colors.grey,
-                          ),
-                        ],
-                      ),
+    return WillPopScope(
+      onWillPop: () async {
+        if (strokes.isNotEmpty) {
+          final shouldPop = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: Text('Unsaved Changes'),
+              content: Text('You have unsaved drawings. Are you sure you want to exit?'),
+              actions: [
+                TextButton(onPressed: () => Navigator.of(context).pop(false), child: Text('Cancel')),
+                TextButton(onPressed: () => Navigator.of(context).pop(true), child: Text('Exit')),
+              ],
+            ),
+          );
+          return shouldPop ?? false;
+        }
+        return true;
+      },
+      child: Scaffold(
+        body: Stack(
+          children: [
+            // Background
+            Container(color: Theme.of(context).colorScheme.background),
 
-                      // Bottom Actions
-                      Column(
-                        children: [
-                          // TODO: Implement undo functionality
-                          // _buildToolButton(Icons.undo, 'Undo', ToolMode.pen),
-                          // SizedBox(height: 16),
-                          IconButton(
-                            icon: Icon(Icons.delete, size: 28),
-                            color: Colors.red,
-                            onPressed: _clearAll,
-                            tooltip: 'Clear Canvas',
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-
-              // Canvas Area
-              Expanded(
-                child: Container(
+            Row(
+              children: [
+                // Enhanced Sidebar (kept as your old UI)
+                Container(
+                  width: isPortrait ? 80 : 100,
                   decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Theme.of(context).colorScheme.background,
-                        Theme.of(context).colorScheme.background.withOpacity(0.9),
+                    color: Theme.of(context).colorScheme.surface,
+                    boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(2, 0))],
+                  ),
+                  child: SafeArea(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        // Top Tools Section
+                        Column(
+                          children: [
+                            _buildToolButton(Icons.brush, 'Draw', ToolMode.pen),
+                            SizedBox(height: 16),
+                            _buildToolButton(Icons.pan_tool, 'Move', ToolMode.move),
+                            SizedBox(height: 16),
+                            _buildToolButton(Icons.auto_fix_off, 'Eraser', ToolMode.eraser),
+                            SizedBox(height: 16),
+                            _buildToolButton(
+                              _isLocked ? Icons.lock : Icons.lock_open,
+                              _isLocked ? 'Unlock' : 'Lock',
+                              ToolMode.lock,
+                              color: _isLocked ? Colors.red : Colors.grey,
+                            ),
+                          ],
+                        ),
+
+                      // Bottom Actions + Scroll Buttons
+Column(
+  children: [
+    // DELETE
+    IconButton(
+      icon: Icon(Icons.delete, size: 28),
+      color: Colors.red,
+      onPressed: _clearAll,
+      tooltip: 'Clear Canvas',
+    ),
+
+    SizedBox(height: 20),
+
+    // SCROLL LEFT
+    IconButton(
+      icon: Icon(Icons.arrow_back_ios_new),
+      color: Colors.blue,
+      tooltip: "Scroll Left",
+      onPressed: _scrollLeft,
+    ),
+
+    SizedBox(height: 12),
+
+    // SCROLL RIGHT
+    IconButton(
+      icon: Icon(Icons.arrow_forward_ios),
+      color: Colors.blue,
+      tooltip: "Scroll Right",
+      onPressed: _scrollRight,
+    ),
+  ],
+),
+
                       ],
                     ),
                   ),
-                  child: Column(
-                    children: [
-                      // Top Bar with Color and Size Controls
-                      if (!isPortrait) _buildTopControls(),
+                ),
 
-                      // Canvas
-                      Expanded(
-                        child: SingleChildScrollView(
-                          controller: _scrollController,
-                          scrollDirection: Axis.horizontal,
-                          physics: _currentTool == ToolMode.move
-                              ? AlwaysScrollableScrollPhysics()
-                              : NeverScrollableScrollPhysics(),
-                          child: SizedBox(
-                            width: CANVAS_WIDTH,
-                            height: screenSize.height - (isPortrait ? 120 : 80),
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
+                // Canvas Area
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Theme.of(context).colorScheme.background,
+                          Theme.of(context).colorScheme.background.withOpacity(0.9),
+                        ],
+                      ),
+                    ),
+                    child: Column(
+                      children: [
+                        // Top Bar with Color and Size Controls
+                        if (!isPortrait) _buildTopControls(),
 
-                              onPanStart: (details) {
-                                if (_currentTool == ToolMode.move) {
-                                  _lastPan = details.globalPosition;
-                                  return;
-                                }
-                                if (_isLocked) return;
+                        // Canvas
+                        Expanded(
+                          child: SingleChildScrollView(
+                            controller: _scrollController,
+                            scrollDirection: Axis.horizontal,
+                            physics: _currentTool == ToolMode.move ? AlwaysScrollableScrollPhysics() : NeverScrollableScrollPhysics(),
+                            child: SizedBox(
+                              width: CANVAS_WIDTH,
+                              height: screenSize.height - (isPortrait ? 120 : 80),
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onPanStart: (details) {
+                                  if (_currentTool == ToolMode.move) {
+                                    _lastPan = details.globalPosition;
+                                    return;
+                                  }
+                                  if (_isLocked) return;
 
-                                final pos = getCanvasPosition(details.globalPosition);
-                                _startStroke(pos);
-                              },
-
-                              onPanUpdate: (details) {
-                                if (_currentTool == ToolMode.move) {
-                                  final dx = _lastPan.dx - details.globalPosition.dx;
-                                  _scrollController.jumpTo(
-                                    (_scrollController.offset + dx).clamp(
-                                      0.0,
-                                      CANVAS_WIDTH - screenSize.width,
-                                    ),
-                                  );
-                                  _lastPan = details.globalPosition;
-                                  return;
-                                }
-                                if (_isLocked) return;
-
-                                final pos = getCanvasPosition(details.globalPosition);
-                                _appendStroke(pos);
-                              },
-
-                              onPanEnd: (_) {
-                                if (_currentTool != ToolMode.move && !_isLocked) {
-                                  _endStroke();
-                                }
-                              },
-
-                              onPanCancel: () {
-                                if (_currentTool != ToolMode.move && !_isLocked) {
-                                  _endStroke();
-                                }
-                              },
-
-                              child: StreamBuilder<List<Stroke>>(
-                                stream: _strokesStreamController.stream,
-                                initialData: strokes,
-                                builder: (context, snapshot) {
-                                  return CustomPaint(
-                                    size: Size(CANVAS_WIDTH, screenSize.height - (isPortrait ? 120 : 80)),
-                                    painter: BoardPainter(snapshot.data ?? []),
-                                  );
+                                  final pos = getCanvasPosition(details.globalPosition);
+                                  _startStroke(pos);
                                 },
+                                onPanUpdate: (details) {
+                                  if (_currentTool == ToolMode.move) {
+                                    final dx = _lastPan.dx - details.globalPosition.dx;
+                                    _scrollController.jumpTo(
+                                      (_scrollController.offset + dx).clamp(
+                                        0.0,
+                                        CANVAS_WIDTH - screenSize.width,
+                                      ),
+                                    );
+                                    _lastPan = details.globalPosition;
+                                    return;
+                                  }
+                                  if (_isLocked) return;
+
+                                  final pos = getCanvasPosition(details.globalPosition);
+                                  _appendStroke(pos);
+                                },
+                                onPanEnd: (_) {
+                                  if (_currentTool != ToolMode.move && !_isLocked) {
+                                    _endStroke();
+                                  }
+                                },
+                                onPanCancel: () {
+                                  if (_currentTool != ToolMode.move && !_isLocked) {
+                                    _endStroke();
+                                  }
+                                },
+                                child: StreamBuilder<List<Stroke>>(
+                                  stream: _strokesStreamController.stream,
+                                  initialData: strokes,
+                                  builder: (context, snapshot) {
+                                    return RepaintBoundary(
+                                      child: CustomPaint(
+                                        key: _canvasKey, // <-- SINGLE key here
+                                        size: Size(CANVAS_WIDTH, screenSize.height - (isPortrait ? 120 : 80)),
+                                        painter: BoardPainter(snapshot.data ?? []),
+                                      ),
+                                    );
+                                  },
+                                ),
                               ),
                             ),
                           ),
                         ),
-                      ),
 
-                      // Bottom Controls for Portrait
-                      if (isPortrait) _buildBottomControls(),
-                    ],
+                        // Bottom Controls for Portrait
+                        if (isPortrait) _buildBottomControls(),
+                      ],
+                    ),
                   ),
-                ),
-              ),
-            ],
-          ),
-
-          // Scroll Buttons
-          Positioned(
-            left: 90,
-            bottom: 20,
-            child: Row(
-              children: [
-                FloatingActionButton.small(
-                  heroTag: 'scroll_left',
-                  backgroundColor: Colors.blue,
-                  onPressed: _scrollLeft,
-                  child: Icon(Icons.arrow_back_ios, color: Colors.white, size: 16),
-                ),
-                SizedBox(width: 8),
-                FloatingActionButton.small(
-                  heroTag: 'scroll_right',
-                  backgroundColor: Colors.blue,
-                  onPressed: _scrollRight,
-                  child: Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
                 ),
               ],
             ),
-          ),
 
-          // Connection Status
-          Positioned(
-            top: 16,
-            right: 16,
-            child: Container(
-              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: socket.connected ? Colors.green : Colors.red,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    socket.connected ? 'Connected' : 'Disconnected',
-                    style: TextStyle(color: Colors.white, fontSize: 12),
-                  ),
-                ],
+           
+
+            // Connection Status
+            Positioned(
+              top: 16,
+              right: 16,
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                child: Row(
+                  children: [
+                    Container(width: 8, height: 8, decoration: BoxDecoration(color: socket.connected ? Colors.green : Colors.red, shape: BoxShape.circle)),
+                    SizedBox(width: 8),
+                    Text(socket.connected ? 'Connected' : 'Disconnected', style: TextStyle(color: Colors.white, fontSize: 12)),
+                  ],
+                ),
               ),
             ),
-          ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopControls() {
+    return Container(
+      height: 80,
+      padding: EdgeInsets.symmetric(horizontal: 16),
+      decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, border: Border(bottom: BorderSide(color: Colors.grey.shade300))),
+      child: Row(
+        children: [
+          Text('Brush Size:', style: TextStyle(fontWeight: FontWeight.w500)),
+          SizedBox(width: 16),
+          Expanded(child: Wrap(spacing: 8, children: _brushSizes.map(_buildBrushSizeIndicator).toList())),
+          SizedBox(width: 24),
+          Text('Colors:', style: TextStyle(fontWeight: FontWeight.w500)),
+          SizedBox(width: 16),
+          Expanded(child: Wrap(spacing: 8, children: _colorPresets.map(_buildColorPreset).toList())),
+          SizedBox(width: 16),
+          IconButton(icon: Icon(Icons.delete, color: Colors.red), onPressed: _clearAll, tooltip: 'Clear Canvas'),
         ],
       ),
-    ),
-  );
-}
-
- Widget _buildTopControls() {
-  return Container(
-    height: 80,
-    padding: EdgeInsets.symmetric(horizontal: 16),
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.surface,
-      border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
-    ),
-    child: Row(
-      children: [
-        Text('Brush Size:', style: TextStyle(fontWeight: FontWeight.w500)),
-        SizedBox(width: 16),
-        Expanded(
-          child: Wrap(
-            spacing: 8,
-            children: _brushSizes.map(_buildBrushSizeIndicator).toList(),
-          ),
-        ),
-        SizedBox(width: 24),
-        Text('Colors:', style: TextStyle(fontWeight: FontWeight.w500)),
-        SizedBox(width: 16),
-        Expanded(
-          child: Wrap(
-            spacing: 8,
-            children: _colorPresets.map(_buildColorPreset).toList(),
-          ),
-        ),
-        SizedBox(width: 16),
-        // Add clear button to top controls
-        IconButton(
-          icon: Icon(Icons.delete, color: Colors.red),
-          onPressed: _clearAll,
-          tooltip: 'Clear Canvas',
-        ),
-      ],
-    ),
-  );
-}
+    );
+  }
 
   Widget _buildBottomControls() {
     return Container(
       height: 120,
       padding: EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        border: Border(top: BorderSide(color: Colors.grey.shade300)),
-      ),
+      decoration: BoxDecoration(color: Theme.of(context).colorScheme.surface, border: Border(top: BorderSide(color: Colors.grey.shade300))),
       child: Column(
         children: [
           Text('Brush Size', style: TextStyle(fontWeight: FontWeight.w500)),
           SizedBox(height: 8),
-          Expanded(
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _brushSizes.length,
-              itemBuilder: (context, index) {
-                return Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 4),
-                  child: _buildBrushSizeIndicator(_brushSizes[index]),
-                );
-              },
-            ),
-          ),
+          Expanded(child: ListView.builder(scrollDirection: Axis.horizontal, itemCount: _brushSizes.length, itemBuilder: (context, index) {
+            return Padding(padding: EdgeInsets.symmetric(horizontal: 4), child: _buildBrushSizeIndicator(_brushSizes[index]));
+          })),
           SizedBox(height: 12),
           Text('Colors', style: TextStyle(fontWeight: FontWeight.w500)),
           SizedBox(height: 8),
-          Expanded(
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _colorPresets.length,
-              itemBuilder: (context, index) {
-                return Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 4),
-                  child: _buildColorPreset(_colorPresets[index]),
-                );
-              },
-            ),
-          ),
+          Expanded(child: ListView.builder(scrollDirection: Axis.horizontal, itemCount: _colorPresets.length, itemBuilder: (context, index) {
+            return Padding(padding: EdgeInsets.symmetric(horizontal: 4), child: _buildColorPreset(_colorPresets[index]));
+          })),
         ],
       ),
     );
@@ -638,7 +588,9 @@ Widget build(BuildContext context) {
   void dispose() {
     _scrollController.dispose();
     _strokesStreamController.close();
-    socket.disconnect();
+    try {
+      socket.dispose();
+    } catch (_) {}
     super.dispose();
   }
 }
