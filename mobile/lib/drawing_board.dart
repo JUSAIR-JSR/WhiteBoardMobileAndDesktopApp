@@ -41,31 +41,32 @@ Color _parseColorString(String? colorStr) {
 
 class BoardPainter extends CustomPainter {
   final List<Stroke> strokes;
-  BoardPainter(this.strokes);
+  final double offsetX;
+
+  BoardPainter(this.strokes, {this.offsetX = 0});
 
   @override
   void paint(Canvas canvas, Size size) {
+    canvas.translate(-offsetX, 0); // ← SHIFT view left/right
+
     final paint = Paint()
-      ..style = PaintingStyle.stroke
       ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+      ..strokeJoin = StrokeJoin.round
+      ..style = PaintingStyle.stroke;
 
     for (final s in strokes) {
-      try {
-        paint.color = _parseColorString(s.color);
-      } catch (_) {
-        paint.color = Colors.black;
-      }
-
+      paint.color = _parseColorString(s.color);
       paint.strokeWidth = s.width;
 
       if (s.points.isEmpty) continue;
 
       final path = Path();
-      path.moveTo(s.points[0].x, s.points[0].y);
-      for (var i = 1; i < s.points.length; i++) {
+      path.moveTo(s.points.first.x, s.points.first.y);
+
+      for (int i = 1; i < s.points.length; i++) {
         path.lineTo(s.points[i].x, s.points[i].y);
       }
+
       canvas.drawPath(path, paint);
     }
   }
@@ -73,3 +74,4 @@ class BoardPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant BoardPainter old) => true;
 }
+

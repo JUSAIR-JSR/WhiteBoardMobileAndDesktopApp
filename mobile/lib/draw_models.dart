@@ -1,84 +1,82 @@
-// mobile/lib/draw_models.dart
+// -------------------------------------------------------------
+// draw_models.dart  (Optimized for Large Canvas + Socket Sync)
+// -------------------------------------------------------------
 
 class StrokePoint {
   final double x;
   final double y;
-  
+
   StrokePoint(this.x, this.y);
 
-  Map<String, dynamic> toJson() => {
-    "x": x,
-    "y": y
-  };
+  Map<String, dynamic> toJson() => {"x": x, "y": y};
 
-  static StrokePoint fromJson(dynamic m) {
-    if (m == null) return StrokePoint(0.0, 0.0);
-    
-    final map = Map<String, dynamic>.from(m as Map);
-    final dx = map['x'];
-    final dy = map['y'];
-    
-    final x = (dx is num) ? dx.toDouble() : double.tryParse(dx.toString()) ?? 0.0;
-    final y = (dy is num) ? dy.toDouble() : double.tryParse(dy.toString()) ?? 0.0;
-    
-    return StrokePoint(x, y);
+  static StrokePoint fromJson(dynamic data) {
+    if (data == null) return StrokePoint(0, 0);
+
+    final map = Map<String, dynamic>.from(data as Map);
+
+    double parse(dynamic v) {
+      if (v is double) return v;
+      if (v is int) return v.toDouble();
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString()) ?? 0.0;
+    }
+
+    return StrokePoint(
+      parse(map["x"]),
+      parse(map["y"]),
+    );
   }
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is StrokePoint &&
-          runtimeType == other.runtimeType &&
-          x == other.x &&
-          y == other.y;
-
-  @override
-  int get hashCode => x.hashCode ^ y.hashCode;
 }
 
 class Stroke {
-  final String type = 'stroke';
-  final String color;
-  final double width;
+  final String type;      // always "stroke"
+  final String color;     // "#RRGGBB" or "#AARRGGBB"
+  final double width;     // brush width
   final List<StrokePoint> points;
-  final DateTime timestamp;
 
   Stroke({
     required this.color,
     required this.width,
     required this.points,
-  }) : timestamp = DateTime.now();
+  }) : type = "stroke";
 
   Map<String, dynamic> toJson() => {
-    "type": type,
-    "color": color,
-    "width": width,
-    "points": points.map((p) => p.toJson()).toList(),
-    "timestamp": timestamp.millisecondsSinceEpoch,
-  };
+        "type": "stroke",
+        "color": color,
+        "width": width,
+        "points": points.map((p) => p.toJson()).toList(),
+      };
 
-  static Stroke fromJson(dynamic m) {
-    final map = Map<String, dynamic>.from(m as Map);
-    
-    final color = map['color']?.toString() ?? "#000000";
-    final widthVal = map['width'];
-    final width = (widthVal is num) ? widthVal.toDouble() : double.tryParse(widthVal?.toString() ?? '') ?? 3.0;
+  static Stroke fromJson(dynamic data) {
+    if (data == null) {
+      return Stroke(color: "#000000", width: 3.0, points: []);
+    }
 
-    final rawPoints = map['points'] as List? ?? [];
-    final points = rawPoints.map((e) => StrokePoint.fromJson(e)).toList();
+    final map = Map<String, dynamic>.from(data as Map);
 
-    return Stroke(color: color, width: width, points: points);
+    // Safe width parsing
+    double parseWidth(dynamic v) {
+      if (v is double) return v;
+      if (v is int) return v.toDouble();
+      if (v is num) return v.toDouble();
+      return double.tryParse(v.toString()) ?? 3.0;
+    }
+
+    // Safe point list parsing
+    final rawPoints = map["points"] ?? [];
+    final List<StrokePoint> pts = [];
+
+    if (rawPoints is List) {
+      for (final p in rawPoints) {
+        pts.add(StrokePoint.fromJson(p));
+      }
+    }
+
+    return Stroke(
+      color: map["color"]?.toString() ?? "#000000",
+      width: parseWidth(map["width"]),
+      points: pts,
+    );
   }
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is Stroke &&
-          runtimeType == other.runtimeType &&
-          color == other.color &&
-          width == other.width &&
-          points.length == other.points.length;
-
-  @override
-  int get hashCode => color.hashCode ^ width.hashCode ^ points.length.hashCode;
 }
